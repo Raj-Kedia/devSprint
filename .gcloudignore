@@ -1,0 +1,11 @@
+.gcloudignore
+.git
+.github
+backend/venv
+backend/__pycache__
+backend/**/__pycache__
+backend/.pytest_cache
+backend/devsprint.db
+frontend/node_modules
+frontend/dist
+
