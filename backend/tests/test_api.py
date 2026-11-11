@@ -1,8 +1,13 @@
+import re
+from urllib.parse import unquote
+from uuid import uuid4
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from app.main import app
+from app.core.config import settings
 from app.core.database import init_db
+from app.services.email_service import email_service
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -163,3 +168,164 @@ async def test_role_based_permissions():
         )
         assert good_sprint_res.status_code == 200
         assert good_sprint_res.json()["name"] == "Sprint 25 — Advanced Roles"
+
+
+@pytest.mark.asyncio
+async def test_email_verification_and_forgot_password(monkeypatch):
+    monkeypatch.setattr(settings, "ENVIRONMENT", "test")
+    email_service.test_outbox.clear()
+    unique_email = f"verify_{uuid4().hex[:8]}@example.com"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # 1. Register -> must require email verification
+        reg_res = await ac.post(
+            "/api/v1/auth/register",
+            json={"name": "Verify Tester", "email": unique_email, "password": "Password123"}
+        )
+        assert reg_res.status_code == 200
+        assert reg_res.json()["requires_verification"] is True
+        assert len(email_service.test_outbox) == 1
+        verify_email_msg = email_service.test_outbox[-1]
+        assert verify_email_msg["to"] == unique_email
+        match = re.search(r"verify_token=([^\s&]+)", verify_email_msg["text"])
+        assert match is not None
+        verify_token = unquote(match.group(1))
+
+        # 2. Login before verification -> 403 and sends fresh verification mail
+        blocked_res = await ac.post(
+            "/api/v1/auth/login",
+            json={"email": unique_email, "password": "Password123"}
+        )
+        assert blocked_res.status_code == 403
+        assert len(email_service.test_outbox) == 2
+        fresh_match = re.search(r"verify_token=([^\s&]+)", email_service.test_outbox[-1]["text"])
+        assert fresh_match is not None
+        fresh_verify_token = unquote(fresh_match.group(1))
+
+        # Prior token was invalidated when a fresh one was issued
+        stale_res = await ac.post("/api/v1/auth/verify-email", json={"token": verify_token})
+        assert stale_res.status_code == 400
+
+        # 3. Verify using latest link -> succeeds & logs in
+        verify_res = await ac.post("/api/v1/auth/verify-email", json={"token": fresh_verify_token})
+        assert verify_res.status_code == 200
+        assert verify_res.json()["user"]["is_verified"] is True
+
+        # 4. Login now succeeds
+        login_res = await ac.post(
+            "/api/v1/auth/login",
+            json={"email": unique_email, "password": "Password123"}
+        )
+        assert login_res.status_code == 200
+
+        # 5. Forgot password -> reset password -> single use
+        email_service.test_outbox.clear()
+        forgot_res = await ac.post("/api/v1/auth/forgot-password", json={"email": unique_email})
+        assert forgot_res.status_code == 200
+        assert len(email_service.test_outbox) == 1
+        reset_match = re.search(r"reset_token=([^\s&]+)", email_service.test_outbox[-1]["text"])
+        assert reset_match is not None
+        reset_token = unquote(reset_match.group(1))
+
+        reset_res = await ac.post(
+            "/api/v1/auth/reset-password",
+            json={"token": reset_token, "new_password": "NewPassword456"}
+        )
+        assert reset_res.status_code == 200
+
+        # Token cannot be reused
+        reuse_res = await ac.post(
+            "/api/v1/auth/reset-password",
+            json={"token": reset_token, "new_password": "AnotherPassword"}
+        )
+        assert reuse_res.status_code == 400
+
+        # Old password fails, new password works
+        old_login = await ac.post(
+            "/api/v1/auth/login",
+            json={"email": unique_email, "password": "Password123"}
+        )
+        assert old_login.status_code == 401
+        new_login = await ac.post(
+            "/api/v1/auth/login",
+            json={"email": unique_email, "password": "NewPassword456"}
+        )
+        assert new_login.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_google_auth_and_team_invite_email(monkeypatch):
+    monkeypatch.setattr(settings, "ENVIRONMENT", "test")
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "test-google-client-id.apps.googleusercontent.com")
+    email_service.test_outbox.clear()
+
+    google_email = f"google_{uuid4().hex[:8]}@gmail.com"
+    invited_email = f"invitee_{uuid4().hex[:8]}@example.com"
+
+    def fake_verify_google(credential: str):
+        assert credential == "mock-google-id-token"
+        return {
+            "sub": f"google-sub-{uuid4().hex[:8]}",
+            "email": google_email,
+            "email_verified": True,
+            "name": "Google User"
+        }
+
+    monkeypatch.setattr("app.api.v1.auth.verify_google_id_token", fake_verify_google)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        cfg_res = await ac.get("/api/v1/auth/config")
+        assert cfg_res.status_code == 200
+        assert cfg_res.json()["google_enabled"] is True
+
+        g_res = await ac.post("/api/v1/auth/google", json={"credential": "mock-google-id-token"})
+        assert g_res.status_code == 200
+        g_data = g_res.json()
+        assert g_data["user"]["email"] == google_email
+        assert g_data["user"]["is_verified"] is True
+
+        # Admin invites a brand-new teammate -> sends mail with generated default password
+        admin_login = await ac.post(
+            "/api/v1/auth/login",
+            json={"email": "alex@devsprint.io", "password": "password123"}
+        )
+        admin_headers = {"Authorization": f"Bearer {admin_login.json()['access_token']}"}
+
+        invite_res = await ac.post(
+            "/api/v1/teams/1/invite",
+            headers=admin_headers,
+            json={"email": invited_email, "role": "member"}
+        )
+        assert invite_res.status_code == 200
+        assert len(email_service.test_outbox) == 1
+        invite_mail = email_service.test_outbox[-1]
+        assert invite_mail["to"] == invited_email
+        pwd_match = re.search(r"Default Password:\s*(\S+)", invite_mail["text"])
+        assert pwd_match is not None
+        temp_password = pwd_match.group(1)
+
+        # Invited teammate signs in with default password from email
+        invitee_login = await ac.post(
+            "/api/v1/auth/login",
+            json={"email": invited_email, "password": temp_password}
+        )
+        assert invitee_login.status_code == 200
+        invitee_data = invitee_login.json()
+        assert invitee_data["user"]["must_change_password"] is True
+
+        # Invited teammate updates their password
+        invitee_headers = {"Authorization": f"Bearer {invitee_data['access_token']}"}
+        change_res = await ac.post(
+            "/api/v1/auth/change-password",
+            headers=invitee_headers,
+            json={"new_password": "CustomStrongPassword1!"}
+        )
+        assert change_res.status_code == 200
+
+        # Confirm updated password works
+        final_login = await ac.post(
+            "/api/v1/auth/login",
+            json={"email": invited_email, "password": "CustomStrongPassword1!"}
+        )
+        assert final_login.status_code == 200
+

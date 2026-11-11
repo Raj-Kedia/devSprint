@@ -19,6 +19,7 @@ class TeamMemberOut(BaseModel):
     team_id: int
     role: TeamRole
     user: UserOut
+    email_sent: Optional[bool] = None
     model_config = ConfigDict(from_attributes=True)
 
 

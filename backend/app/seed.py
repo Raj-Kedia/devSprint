@@ -26,10 +26,10 @@ async def seed_data():
 
         # 1. Users
         users = [
-            User(name="Alex Rivera", email="alex@devsprint.io", password_hash=pwd),
-            User(name="Sam Chen", email="sam@devsprint.io", password_hash=pwd),
-            User(name="Taylor Hayes", email="taylor@devsprint.io", password_hash=pwd),
-            User(name="Jordan Vance", email="jordan@devsprint.io", password_hash=pwd),
+            User(name="Alex Rivera", email="alex@devsprint.io", password_hash=pwd, is_verified=True),
+            User(name="Sam Chen", email="sam@devsprint.io", password_hash=pwd, is_verified=True),
+            User(name="Taylor Hayes", email="taylor@devsprint.io", password_hash=pwd, is_verified=True),
+            User(name="Jordan Vance", email="jordan@devsprint.io", password_hash=pwd, is_verified=True),
         ]
         session.add_all(users)
         await session.flush()

@@ -1,5 +1,8 @@
 import {
   User,
+  AuthConfig,
+  RegisterResponse,
+  MessageResponse,
   Team,
   Sprint,
   SprintBoard,
@@ -43,7 +46,12 @@ class ApiService {
 
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({ detail: 'An unexpected network error occurred' }));
-      throw new Error(errorData.detail || `Request failed with status ${res.status}`);
+      const detailMsg = Array.isArray(errorData.detail)
+        ? errorData.detail.map((d: any) => d.msg || String(d)).join(', ')
+        : errorData.detail;
+      const err: any = new Error(detailMsg || `Request failed with status ${res.status}`);
+      err.status = res.status;
+      throw err;
     }
 
     const data = await res.json();
@@ -51,6 +59,11 @@ class ApiService {
   }
 
   // Auth
+  async getAuthConfig() {
+    const res = await this.request<AuthConfig>('/auth/config');
+    return res.data;
+  }
+
   async login(email: string, password: string) {
     const res = await this.request<{ access_token: string; user: User }>('/auth/login', {
       method: 'POST',
@@ -60,12 +73,61 @@ class ApiService {
     return res.data;
   }
 
+  async loginWithGoogle(credential: string) {
+    const res = await this.request<{ access_token: string; user: User }>('/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ credential })
+    });
+    localStorage.setItem('devsprint_token', res.data.access_token);
+    return res.data;
+  }
+
   async register(name: string, email: string, password: string) {
-    const res = await this.request<{ access_token: string; user: User }>('/auth/register', {
+    const res = await this.request<RegisterResponse>('/auth/register', {
       method: 'POST',
       body: JSON.stringify({ name, email, password })
     });
+    return res.data;
+  }
+
+  async verifyEmail(token: string) {
+    const res = await this.request<{ access_token: string; user: User }>('/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify({ token })
+    });
     localStorage.setItem('devsprint_token', res.data.access_token);
+    return res.data;
+  }
+
+  async resendVerification(email: string) {
+    const res = await this.request<MessageResponse>('/auth/resend-verification', {
+      method: 'POST',
+      body: JSON.stringify({ email })
+    });
+    return res.data;
+  }
+
+  async forgotPassword(email: string) {
+    const res = await this.request<MessageResponse>('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email })
+    });
+    return res.data;
+  }
+
+  async resetPassword(token: string, newPassword: string) {
+    const res = await this.request<MessageResponse>('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, new_password: newPassword })
+    });
+    return res.data;
+  }
+
+  async changePassword(currentPassword: string | null, newPassword: string) {
+    const res = await this.request<MessageResponse>('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+    });
     return res.data;
   }
 

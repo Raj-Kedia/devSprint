@@ -1,5 +1,6 @@
 import logging
 from typing import AsyncGenerator
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from app.core.config import settings
@@ -56,12 +57,35 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
+def _create_and_migrate_sync(sync_conn):
+    """Create missing tables and backfill newly added User columns on existing DBs."""
+    Base.metadata.create_all(sync_conn)
+    inspector = inspect(sync_conn)
+    if "users" not in inspector.get_table_names():
+        return
+
+    existing_cols = {col["name"] for col in inspector.get_columns("users")}
+    column_alters = {
+        "is_verified": "ALTER TABLE users ADD COLUMN is_verified BOOLEAN NOT NULL DEFAULT TRUE",
+        "auth_provider": "ALTER TABLE users ADD COLUMN auth_provider VARCHAR(50) NOT NULL DEFAULT 'email'",
+        "google_sub": "ALTER TABLE users ADD COLUMN google_sub VARCHAR(255)",
+        "must_change_password": "ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
+    }
+    for col_name, ddl in column_alters.items():
+        if col_name not in existing_cols:
+            sync_conn.execute(text(ddl))
+
+    sync_conn.execute(
+        text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_google_sub ON users (google_sub)")
+    )
+
+
 async def init_db():
     global engine
     try:
         # Test connection
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(_create_and_migrate_sync)
         logger.info("Database initialized successfully with Primary Engine.")
     except Exception as e:
         logger.warning(f"Primary database connection failed: {e}. Switching to SQLite fallback engine...")
@@ -69,5 +93,5 @@ async def init_db():
         # Update existing sessionmaker in-place so all existing imports use the new engine!
         AsyncSessionLocal.configure(bind=engine)
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(_create_and_migrate_sync)
         logger.info("Database initialized successfully with SQLite Fallback Engine.")

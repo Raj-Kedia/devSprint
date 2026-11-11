@@ -1,10 +1,11 @@
 import { create } from 'zustand';
-import { User, Team, TeamMember, TeamRole } from '../types';
+import { AuthConfig, MessageResponse, RegisterResponse, Team, TeamMember, TeamRole, User } from '../types';
 import { api } from '../services/api';
 
 interface AuthState {
   user: User | null;
   token: string | null;
+  authConfig: AuthConfig | null;
   teams: Team[];
   activeTeam: Team | null;
   teamMembers: TeamMember[];
@@ -13,18 +14,26 @@ interface AuthState {
   isLoading: boolean;
   error: string | null;
 
+  loadAuthConfig: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string) => Promise<void>;
+  loginWithGoogle: (credential: string) => Promise<void>;
+  register: (name: string, email: string, password: string) => Promise<RegisterResponse>;
+  verifyEmail: (token: string) => Promise<void>;
+  resendVerification: (email: string) => Promise<MessageResponse>;
+  forgotPassword: (email: string) => Promise<MessageResponse>;
+  resetPassword: (token: string, newPassword: string) => Promise<MessageResponse>;
+  changePassword: (currentPassword: string | null, newPassword: string) => Promise<MessageResponse>;
   logout: () => void;
   checkAuth: () => Promise<void>;
   fetchTeams: () => Promise<void>;
   setActiveTeam: (team: Team) => Promise<void>;
-  inviteMember: (email: string, role?: string) => Promise<void>;
+  inviteMember: (email: string, role?: string) => Promise<{ email_sent?: boolean }>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   token: localStorage.getItem('devsprint_token'),
+  authConfig: null,
   teams: [],
   activeTeam: null,
   teamMembers: [],
@@ -33,28 +42,80 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isLoading: true,
   error: null,
 
+  loadAuthConfig: async () => {
+    try {
+      const authConfig = await api.getAuthConfig();
+      set({ authConfig });
+    } catch (err) {
+      console.error('Failed to load auth config', err);
+    }
+  },
+
   login: async (email, password) => {
-    set({ isLoading: true, error: null });
+    set({ error: null });
     try {
       const data = await api.login(email, password);
-      set({ user: data.user, token: data.access_token, isLoading: false });
+      set({ user: data.user, token: data.access_token });
       await get().fetchTeams();
     } catch (err: any) {
-      set({ error: err.message, isLoading: false });
+      set({ error: err.message });
+      throw err;
+    }
+  },
+
+  loginWithGoogle: async (credential) => {
+    set({ error: null });
+    try {
+      const data = await api.loginWithGoogle(credential);
+      set({ user: data.user, token: data.access_token });
+      await get().fetchTeams();
+    } catch (err: any) {
+      set({ error: err.message });
       throw err;
     }
   },
 
   register: async (name, email, password) => {
-    set({ isLoading: true, error: null });
+    set({ error: null });
     try {
-      const data = await api.register(name, email, password);
-      set({ user: data.user, token: data.access_token, isLoading: false });
-      await get().fetchTeams();
+      return await api.register(name, email, password);
     } catch (err: any) {
-      set({ error: err.message, isLoading: false });
+      set({ error: err.message });
       throw err;
     }
+  },
+
+  verifyEmail: async (token) => {
+    set({ error: null });
+    try {
+      const data = await api.verifyEmail(token);
+      set({ user: data.user, token: data.access_token });
+      await get().fetchTeams();
+    } catch (err: any) {
+      set({ error: err.message });
+      throw err;
+    }
+  },
+
+  resendVerification: async (email) => {
+    return await api.resendVerification(email);
+  },
+
+  forgotPassword: async (email) => {
+    return await api.forgotPassword(email);
+  },
+
+  resetPassword: async (token, newPassword) => {
+    return await api.resetPassword(token, newPassword);
+  },
+
+  changePassword: async (currentPassword, newPassword) => {
+    const res = await api.changePassword(currentPassword, newPassword);
+    const currentUser = get().user;
+    if (currentUser) {
+      set({ user: { ...currentUser, must_change_password: false } });
+    }
+    return res;
   },
 
   logout: () => {
@@ -123,8 +184,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   inviteMember: async (email: string, role: string = 'member') => {
     const activeTeam = get().activeTeam;
-    if (!activeTeam) return;
-    await api.inviteMember(activeTeam.id, email, role);
+    if (!activeTeam) return {};
+    const member = await api.inviteMember(activeTeam.id, email, role);
     await get().setActiveTeam(activeTeam);
+    return { email_sent: member?.email_sent };
   }
 }));

@@ -7,7 +7,28 @@ export interface User {
   id: number;
   name: string;
   email: string;
+  is_verified?: boolean;
+  auth_provider?: string;
+  must_change_password?: boolean;
   created_at: string;
+}
+
+export interface AuthConfig {
+  google_enabled: boolean;
+  google_client_id?: string | null;
+  email_enabled: boolean;
+}
+
+export interface RegisterResponse {
+  message: string;
+  email: string;
+  requires_verification: boolean;
+  email_sent: boolean;
+}
+
+export interface MessageResponse {
+  message: string;
+  email_sent?: boolean | null;
 }
 
 export interface TeamMember {

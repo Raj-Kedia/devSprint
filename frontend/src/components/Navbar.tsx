@@ -7,6 +7,7 @@ import {
   Sun,
   Moon,
   Activity,
+  KeyRound,
 } from 'lucide-react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useThemeStore } from '../store/useThemeStore';
@@ -17,6 +18,7 @@ interface NavbarProps {
   onOpenInviteModal: () => void;
   onOpenNewTeamModal: () => void;
   onOpenCacheStats: () => void;
+  onOpenChangePassword: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -25,6 +27,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenInviteModal,
   onOpenNewTeamModal,
   onOpenCacheStats,
+  onOpenChangePassword,
 }) => {
   const { user, teams, activeTeam, setActiveTeam, logout, isAdmin, currentUserRole } = useAuthStore();
   const { theme, toggleTheme } = useThemeStore();
@@ -207,6 +210,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <Activity className="w-3.5 h-3.5 text-indigo-500" /> System Diagnostics
                   </button>
                 )}
+
+                <button
+                  onClick={() => {
+                    setShowUserMenu(false);
+                    onOpenChangePassword();
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 rounded-md text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 flex items-center gap-2 mb-1"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-zinc-500" />
+                  {user?.must_change_password ? 'Set Your Password' : 'Change Password'}
+                </button>
 
                 <button
                   onClick={logout}

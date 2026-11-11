@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Mail, Copy, Check, UserPlus } from 'lucide-react';
+import { X, Copy, Check, UserPlus } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 
 interface InviteModalProps {
@@ -13,30 +13,44 @@ export const InviteModal: React.FC<InviteModalProps> = ({ isOpen, onClose }) => 
   const [role, setRole] = useState('member');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [successMsg, setSuccessMsg] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [statusBanner, setStatusBanner] = useState<{ type: 'success' | 'warning'; text: string } | null>(null);
 
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim()) return;
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) return;
     setIsSubmitting(true);
+    setErrorMsg(null);
+    setStatusBanner(null);
     try {
-      await inviteMember(email.trim(), role);
-      setSuccessMsg(true);
+      const res = await inviteMember(trimmedEmail, role);
       setEmail('');
-      setTimeout(() => {
-        setSuccessMsg(false);
-        onClose();
-      }, 1500);
-    } catch (err) {
-      console.error(err);
+      if (res?.email_sent) {
+        setStatusBanner({
+          type: 'success',
+          text: `Invitation email with login details sent to ${trimmedEmail}.`,
+        });
+        setTimeout(() => {
+          setStatusBanner(null);
+          onClose();
+        }, 1800);
+      } else {
+        setStatusBanner({
+          type: 'warning',
+          text: `${trimmedEmail} was added to ${activeTeam?.name || 'the workspace'}, but SMTP email is not configured on the server so no email was sent.`,
+        });
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to invite teammate');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const inviteLink = `${window.location.origin}/join?team=${activeTeam?.id || 1}`;
+  const inviteLink = `${window.location.origin}/?team=${activeTeam?.id || 1}`;
 
   const copyLink = () => {
     navigator.clipboard.writeText(inviteLink);
@@ -60,9 +74,21 @@ export const InviteModal: React.FC<InviteModalProps> = ({ isOpen, onClose }) => 
           </button>
         </div>
 
-        {successMsg && (
-          <div className="mb-4 p-2.5 rounded-md bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-medium">
-            Invitation sent successfully!
+        {statusBanner && (
+          <div
+            className={`mb-4 p-2.5 rounded-md border text-xs font-medium ${
+              statusBanner.type === 'success'
+                ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                : 'bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20 text-amber-700 dark:text-amber-300'
+            }`}
+          >
+            {statusBanner.text}
+          </div>
+        )}
+
+        {errorMsg && (
+          <div className="mb-4 p-2.5 rounded-md bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-medium">
+            {errorMsg}
           </div>
         )}
 
